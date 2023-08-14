@@ -32,6 +32,7 @@ import junit.framework.TestCase;
 @GwtCompatible(emulated = true)
 public class AbstractIteratorTest extends TestCase {
 
+
   public void testDefaultBehaviorOfNextAndHasNext() {
 
     // This sample AbstractIterator returns 0 on the first call, 1 on the
