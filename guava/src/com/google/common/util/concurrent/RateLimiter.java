@@ -291,6 +291,8 @@ public abstract class RateLimiter {
   }
 
   /**
+   * acquire函数主要用于获取permits个令牌，并计算需要等待多长时间，进而挂起等待，并将该值返回
+   *
    * Acquires the given number of permits from this {@code RateLimiter}, blocking until the request
    * can be granted. Tells the amount of time slept, if any.
    *
@@ -395,6 +397,9 @@ public abstract class RateLimiter {
   }
 
   /**
+   * tryAcquire函数可以尝试在timeout时间内获取令牌，如果可以则挂起等待相应时间并返回true，否则立即返回false
+   * canAcquire用于判断timeout时间内是否可以获取令牌
+   *
    * Acquires the given number of permits from this {@code RateLimiter} if it can be obtained
    * without exceeding the specified {@code timeout}, or returns {@code false} immediately (without
    * waiting) if the permits would not have been granted before the timeout expired.
@@ -410,6 +415,7 @@ public abstract class RateLimiter {
     long timeoutMicros = max(unit.toMicros(timeout), 0);
     checkPermits(permits);
     long microsToWait;
+    // 加锁，一次只能处理一个请求
     synchronized (mutex()) {
       long nowMicros = stopwatch.readMicros();
       if (!canAcquire(nowMicros, timeoutMicros)) {
@@ -422,6 +428,9 @@ public abstract class RateLimiter {
     return true;
   }
 
+  /**
+   * canAcquire用于判断timeout时间内是否可以获取令牌
+   */
   private boolean canAcquire(long nowMicros, long timeoutMicros) {
     return queryEarliestAvailable(nowMicros) - timeoutMicros <= nowMicros;
   }

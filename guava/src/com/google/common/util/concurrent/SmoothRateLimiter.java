@@ -280,12 +280,15 @@ abstract class SmoothRateLimiter extends RateLimiter {
 
     SmoothBursty(SleepingStopwatch stopwatch, double maxBurstSeconds) {
       super(stopwatch);
+      // 最大存储maxBurstSeconds秒生成的令牌
       this.maxBurstSeconds = maxBurstSeconds;
     }
 
     @Override
     void doSetRate(double permitsPerSecond, double stableIntervalMicros) {
       double oldMaxPermits = this.maxPermits;
+      // 计算最大存储令牌数，桶中可存放的最大令牌数由maxBurstSeconds计算而来，其含义为最大存储maxBurstSeconds秒生成的令牌。
+      // 该参数的作用在于，可以更为灵活地控制流量。如，某些接口限制为300次/20秒，某些接口限制为50次/45秒等。
       maxPermits = maxBurstSeconds * permitsPerSecond;
       if (oldMaxPermits == Double.POSITIVE_INFINITY) {
         // if we don't special-case this, we would get storedPermits == NaN, below
@@ -309,19 +312,29 @@ abstract class SmoothRateLimiter extends RateLimiter {
     }
   }
 
-  /** The currently stored permits. */
+  /**
+   * 当前存储令牌数
+   * The currently stored permits.
+   */
   double storedPermits;
 
-  /** The maximum number of stored permits. */
+  /**
+   * 最大存储令牌数
+   * The maximum number of stored permits.
+   */
   double maxPermits;
 
   /**
+   * 添加令牌时间间隔
    * The interval between two unit requests, at our stable rate. E.g., a stable rate of 5 permits
    * per second has a stable interval of 200ms.
    */
   double stableIntervalMicros;
 
   /**
+   * 下一次请求可以获取令牌的起始时间
+   * 由于RateLimiter允许预消费，上次请求预消费令牌后
+   * 下次请求需要等待相应的时间到nextFreeTicketMicros时刻才可以获取令牌
    * The time when the next request (no matter its size) will be granted. After granting a request,
    * this is pushed further in the future. Large requests push this further than small requests.
    */
@@ -351,16 +364,26 @@ abstract class SmoothRateLimiter extends RateLimiter {
     return nextFreeTicketMicros;
   }
 
+  /**
+   * 该函数用于获取requiredPermits个令牌，并返回需要等待到的时间点
+   *
+   */
   @Override
   final long reserveEarliestAvailable(int requiredPermits, long nowMicros) {
     resync(nowMicros);
+    // 返回的是上次计算的nextFreeTicketMicros，而不是本次更新的nextFreeTicketMicros，
+    // 通俗来讲，本次请求需要为上次请求的预消费行为埋单，这也是RateLimiter可以预消费(处理突发)的原理所在。
     long returnValue = nextFreeTicketMicros;
+    // 可以消费的令牌数
     double storedPermitsToSpend = min(requiredPermits, this.storedPermits);
+    // 还需要的令牌数
     double freshPermits = requiredPermits - storedPermitsToSpend;
+    // 根据freshPermits计算需要等待的时间
     long waitMicros =
         storedPermitsToWaitTime(this.storedPermits, storedPermitsToSpend)
             + (long) (freshPermits * stableIntervalMicros);
 
+    // 本次计算的nextFreeTicketMicros不返回
     this.nextFreeTicketMicros = LongMath.saturatedAdd(nextFreeTicketMicros, waitMicros);
     this.storedPermits -= storedPermitsToSpend;
     return returnValue;
@@ -380,7 +403,13 @@ abstract class SmoothRateLimiter extends RateLimiter {
    */
   abstract double coolDownIntervalMicros();
 
-  /** Updates {@code storedPermits} and {@code nextFreeTicketMicros} based on the current time. */
+  /**
+   * 根据令牌桶算法，桶中的令牌是持续生成存放的，有请求时需要先从桶中拿到令牌才能开始执行，谁来持续生成令牌存放呢？
+   * 一种解法是，开启一个定时任务，由定时任务持续生成令牌。这样的问题在于会极大的消耗系统资源，如，某接口需要分别对每个用户做访问频率限制，假设系统中存在6W用户，则至多需要开启6W个定时任务来维持每个桶中的令牌数，这样的开销是巨大的。
+   * 另一种解法则是延迟计算，如上resync函数。该函数会在每次获取令牌之前调用，其实现思路为，若当前时间晚于nextFreeTicketMicros，则计算该段时间内可以生成多少令牌，将生成的令牌加入令牌桶中并更新数据。这样一来，只需要在获取令牌时计算一次即可。
+   * 很简单吧
+   * Updates {@code storedPermits} and {@code nextFreeTicketMicros} based on the current time.
+   */
   void resync(long nowMicros) {
     // if nextFreeTicket is in the past, resync to now
     if (nowMicros > nextFreeTicketMicros) {
